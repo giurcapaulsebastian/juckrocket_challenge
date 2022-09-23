@@ -14,7 +14,7 @@ API_WORKING = True
 
 #Database config and DB models
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir,'db.sqlite')
-db = SQLAlchemy(app)
+db = SQLAlchemy(app, session_options={"expire_on_commit": False})
 
 
 LAST_CHECKED = 0
@@ -69,7 +69,7 @@ class TransactionModel(db.Model):
         super().__init__()
 
 
-def make_transaction(app,from_iban, to_iban, amount, wallet_id):
+def make_transaction(app, transaction):
     global API_WORKING
     global LAST_CHECKED
     with app.app_context():
@@ -77,8 +77,9 @@ def make_transaction(app,from_iban, to_iban, amount, wallet_id):
             while API_WORKING is True:
                 events = []
                 
+                print(f"TRANSACTION!!: {transaction}")
                 #try to create wallet or move on
-                response = requests.post(url=f"http://127.0.0.1:5000/wallet/{wallet_id}")
+                response = requests.post(url=f"http://127.0.0.1:5000/wallet/{transaction.wallet_id}")
                 if response.status_code == 500:
                     #application is broken, changed global status
                     print('BROKEN!')
@@ -91,8 +92,6 @@ def make_transaction(app,from_iban, to_iban, amount, wallet_id):
                     else:
                         print("Wallet possibly created succesfuly!")
                 
-                #transaction part
-                transaction = TransactionModel(from_iban, to_iban, amount, wallet_id)
                 
                 if not transaction.payin_finished:
                     #do payin api call
@@ -125,8 +124,10 @@ def make_transaction(app,from_iban, to_iban, amount, wallet_id):
                         except KeyError:
                             # silent fail we try again
                             break
-                    print(f"Length of events inside thread -> {len(events)}")
-                    print(f"Last checked value -> {LAST_CHECKED}")
+                        
+                    # print(f"Length of events inside thread -> {len(events)}")
+                    # print(f"Last checked value -> {LAST_CHECKED}")
+                    
                     payin_succeded = False
                     for item in events:
                         if str(item['amount']) == transaction.amount and item['wallet_id'] == transaction.wallet_id:
@@ -149,6 +150,7 @@ def make_transaction(app,from_iban, to_iban, amount, wallet_id):
                         print('BROKEN!')
                         API_WORKING = False
                         break
+                    #wait for transaction to finsih by bank api
                     time.sleep(4)
                     
                     #read events from last_checked index
@@ -167,36 +169,33 @@ def make_transaction(app,from_iban, to_iban, amount, wallet_id):
                         except KeyError:
                             # silent fail we try again
                             break
-                    print(f"Length of events inside thread -> {len(events)}")
-                    print(f"Last checked value -> {LAST_CHECKED}")
+                        
+                    # print(f"Length of events inside thread -> {len(events)}")
+                    # print(f"Last checked value -> {LAST_CHECKED}")
+                    
                     payout_succeded = False
                     for item in events:
                         if str(item['amount']) == transaction.amount and item['wallet_id'] == transaction.wallet_id:
                             payout_succeded = True
                     if payout_succeded:
+                        #TRANSACTION FINISHED!
                         transaction.payout_finished = True
+                        transaction.finished = True
                         print(f"Transaction wallet({transaction.wallet_id}) : SUCCESFULL PAYOUT!")
+                        print(f"Transaction done !")
+                        break
                     else:
-                        print(f"Transaction wallet({transaction.wallet_id}) : FAILED PAYOUT!")
-                
-                # API_WORKING=False
-                #wait 3 hours to get the data from the server
-                #check payin worked ok
-                break
-                
-                #do payout
-                #wait 3 hours to get the settlements data from the server
-                #check payout worked ok
-            break 
-            # time.sleep(1)
-            # print("Waiting for API...")
+                        print(f"Transaction wallet({transaction.wallet_id}) : FAILED PAYOUT! Trying again...")
+            break
 
 @app.route('/transaction', methods=['POST'])
 def initiate_transaction():
     data = request.json
     from_iban, to_iban, amount = data['from_iban'], data['to_iban'], data['amount']
     wallet_id = ''.join(rand.choice(string.ascii_lowercase) for _ in range(8))
-    t = threading.Thread(target=make_transaction, args=[app,from_iban, to_iban, amount, wallet_id])
+    transaction = TransactionModel(from_iban, to_iban, amount, wallet_id)
+    db.session.add(transaction)
+    t = threading.Thread(target=make_transaction, args=[app, transaction])
     t.daemon = True
     t.start()
     return jsonify(dict(result='Transaction initiated successfully!'))
