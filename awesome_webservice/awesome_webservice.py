@@ -56,8 +56,10 @@ class TransactionModel(db.Model):
     to_iban = db.Column(db.String(30), nullable=False)
     amount = db.Column(db.Float, nullable=False)
     wallet_id = db.Column(db.String(10), nullable=False)
-    status = db.Column(db.String(10), default="CREATED")
-    type = db.Column(db.String(10), default="payin")
+    
+    payin_finished = db.Column(db.Boolean, default=False)
+    payout_finished = db.Column(db.Boolean, default=False)
+    finished = db.Column(db.Boolean, default=False)
     
     def __init__(self, from_iban, to_iban, amount, wallet_id):
         self.from_iban = from_iban
@@ -92,86 +94,90 @@ def make_transaction(app,from_iban, to_iban, amount, wallet_id):
                 #transaction part
                 transaction = TransactionModel(from_iban, to_iban, amount, wallet_id)
                 
-                #do payin api call
-                response = requests.post(url=f"http://127.0.0.1:5000/settle",json={
-                    'amount': transaction.amount,
-                    'wallet_id': transaction.wallet_id,
-                    'type': 'payin',
-                    'iban': transaction.to_iban
-                })
-                if response.status_code == 500:
-                    #application is broken, changed global status
-                    print('BROKEN!')
-                    API_WORKING = False
-                    break
-                time.sleep(4)
-                
-                #read events from last_checked index
-                response = requests.get(url=f"http://127.0.0.1:5000/events/{LAST_CHECKED}")
-                if response.status_code == 500:
-                    #application is broken, changed global status
-                    print('BROKEN!')
-                    API_WORKING = False
-                    break
-                else:
-                    try:
-                        #this gives keyError if silent fail of get
-                        data = response.json()
-                        events = data['events']
-                        LAST_CHECKED+=len(events)
-                    except KeyError:
-                        # silent fail we try again
+                if not transaction.payin_finished:
+                    #do payin api call
+                    response = requests.post(url=f"http://127.0.0.1:5000/settle",json={
+                        'amount': transaction.amount,
+                        'wallet_id': transaction.wallet_id,
+                        'type': 'payin',
+                        'iban': transaction.to_iban
+                    })
+                    if response.status_code == 500:
+                        #application is broken, changed global status
+                        print('BROKEN!')
+                        API_WORKING = False
                         break
-                print(f"Length of events inside thread -> {len(events)}")
-                print(f"Last checked value -> {LAST_CHECKED}")
-                payin_succeded = False
-                for item in events:
-                    if str(item['amount']) == transaction.amount and item['wallet_id'] == transaction.wallet_id:
-                        payin_succeded = True
-                if payin_succeded:
-                    print(f"Transaction wallet({transaction.wallet_id}) : SUCCESFULL PAYIN!")
-                else:
-                    print(f"Transaction wallet({transaction.wallet_id}) : FAILED PAYIN!")
-                
-                response = requests.post(url=f"http://127.0.0.1:5000/settle",json={
-                    'amount': transaction.amount,
-                    'wallet_id': transaction.wallet_id,
-                    'type': 'payout',
-                    'iban': transaction.to_iban
-                })
-                if response.status_code == 500:
-                    #application is broken, changed global status
-                    print('BROKEN!')
-                    API_WORKING = False
-                    break
-                time.sleep(4)
-                
-                #read events from last_checked index
-                response = requests.get(url=f"http://127.0.0.1:5000/events/{LAST_CHECKED}")
-                if response.status_code == 500:
-                    #application is broken, changed global status
-                    print('BROKEN!')
-                    API_WORKING = False
-                    break
-                else:
-                    try:
-                        #this gives keyError if silent fail of get
-                        data = response.json()
-                        events = data['events']
-                        LAST_CHECKED+=len(events)
-                    except KeyError:
-                        # silent fail we try again
+                    time.sleep(4)
+                    
+                    #read events from last_checked index
+                    response = requests.get(url=f"http://127.0.0.1:5000/events/{LAST_CHECKED}")
+                    if response.status_code == 500:
+                        #application is broken, changed global status
+                        print('BROKEN!')
+                        API_WORKING = False
                         break
-                print(f"Length of events inside thread -> {len(events)}")
-                print(f"Last checked value -> {LAST_CHECKED}")
-                payin_succeded = False
-                for item in events:
-                    if str(item['amount']) == transaction.amount and item['wallet_id'] == transaction.wallet_id:
-                        payin_succeded = True
-                if payin_succeded:
-                    print(f"Transaction wallet({transaction.wallet_id}) : SUCCESFULL PAYOUT!")
-                else:
-                    print(f"Transaction wallet({transaction.wallet_id}) : FAILED PAYOUT!")
+                    else:
+                        try:
+                            #this gives keyError if silent fail of get
+                            data = response.json()
+                            events = data['events']
+                            LAST_CHECKED+=len(events)
+                        except KeyError:
+                            # silent fail we try again
+                            break
+                    print(f"Length of events inside thread -> {len(events)}")
+                    print(f"Last checked value -> {LAST_CHECKED}")
+                    payin_succeded = False
+                    for item in events:
+                        if str(item['amount']) == transaction.amount and item['wallet_id'] == transaction.wallet_id:
+                            payin_succeded = True
+                    if payin_succeded:
+                        transaction.payin_finished = True
+                        print(f"Transaction wallet({transaction.wallet_id}) : SUCCESFULL PAYIN!")
+                    else:
+                        print(f"Transaction wallet({transaction.wallet_id}) : FAILED PAYIN!")
+                
+                if transaction.payin_finished:
+                    response = requests.post(url=f"http://127.0.0.1:5000/settle",json={
+                        'amount': transaction.amount,
+                        'wallet_id': transaction.wallet_id,
+                        'type': 'payout',
+                        'iban': transaction.to_iban
+                    })
+                    if response.status_code == 500:
+                        #application is broken, changed global status
+                        print('BROKEN!')
+                        API_WORKING = False
+                        break
+                    time.sleep(4)
+                    
+                    #read events from last_checked index
+                    response = requests.get(url=f"http://127.0.0.1:5000/events/{LAST_CHECKED}")
+                    if response.status_code == 500:
+                        #application is broken, changed global status
+                        print('BROKEN!')
+                        API_WORKING = False
+                        break
+                    else:
+                        try:
+                            #this gives keyError if silent fail of get
+                            data = response.json()
+                            events = data['events']
+                            LAST_CHECKED+=len(events)
+                        except KeyError:
+                            # silent fail we try again
+                            break
+                    print(f"Length of events inside thread -> {len(events)}")
+                    print(f"Last checked value -> {LAST_CHECKED}")
+                    payout_succeded = False
+                    for item in events:
+                        if str(item['amount']) == transaction.amount and item['wallet_id'] == transaction.wallet_id:
+                            payout_succeded = True
+                    if payout_succeded:
+                        transaction.payout_finished = True
+                        print(f"Transaction wallet({transaction.wallet_id}) : SUCCESFULL PAYOUT!")
+                    else:
+                        print(f"Transaction wallet({transaction.wallet_id}) : FAILED PAYOUT!")
                 
                 # API_WORKING=False
                 #wait 3 hours to get the data from the server
