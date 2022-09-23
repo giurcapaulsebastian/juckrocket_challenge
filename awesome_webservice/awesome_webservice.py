@@ -19,32 +19,53 @@ db = SQLAlchemy(app, session_options={"expire_on_commit": False})
 
 LAST_CHECKED = 0
 
-def event_reader():
-    # global events
-    global LAST_CHECKED
-    global API_WORKING
-    time.sleep(3)
-    while True:
-        while API_WORKING:
-            response = requests.get(url=f"http://127.0.0.1:5000/events/{LAST_CHECKED}")
-            if response.status_code == 500:
-                #application is broken, changed global status
-                print('BROKEN!')
-                API_WORKING = False
-                break
-            else:
-                try:
-                    #this gives keyError if silent fail of get
-                    data = response.json()
-                    events += data['events']
-                    LAST_CHECKED=len(events)
-                    print("!!!!EVENTS!!!!")
-                    print(f"Length of events inside reader{len(events)}")
-                    time.sleep(10)
-                except KeyError:
-                    #we don nothing and try again
-                    time.sleep(10)
-                    pass
+#TODO
+#Do a thread that checks the health of API periodically when API_WORKING becomes false
+# def api_health_check():
+#     global API_WORKING
+#     while True:
+#         while not API_WORKING:
+#             response = requests.get(url=f"http://127.0.0.1:5000/events/{LAST_CHECKED}")
+#             if response.status_code == 500:
+#                 #application is broken, changed global status
+#                 print('BROKEN!')
+#                 API_WORKING = False
+#                 time.sleep(6)
+#             else:
+#                 API_WORKING = True
+#                 break
+#         time.sleep(1)
+            
+# t = threading.Thread(target=api_health_check)
+# t.daemon = True
+# t.start()
+
+# def event_reader():
+#     # global events
+#     global LAST_CHECKED
+#     global API_WORKING
+#     time.sleep(3)
+#     while True:
+#         while API_WORKING:
+#             response = requests.get(url=f"http://127.0.0.1:5000/events/{LAST_CHECKED}")
+#             if response.status_code == 500:
+#                 #application is broken, changed global status
+#                 print('BROKEN!')
+#                 API_WORKING = False
+#                 break
+#             else:
+#                 try:
+#                     #this gives keyError if silent fail of get
+#                     data = response.json()
+#                     events += data['events']
+#                     LAST_CHECKED=len(events)
+#                     print("!!!!EVENTS!!!!")
+#                     print(f"Length of events inside reader{len(events)}")
+#                     time.sleep(10)
+#                 except KeyError:
+#                     #we don nothing and try again
+#                     time.sleep(10)
+#                     pass
 
 # t = threading.Thread(target=event_reader)
 # t.daemon = True
@@ -151,7 +172,7 @@ def make_transaction(app, transaction):
                         API_WORKING = False
                         break
                     #wait for transaction to finsih by bank api
-                    time.sleep(4)
+                    time.sleep(5)
                     
                     #read events from last_checked index
                     response = requests.get(url=f"http://127.0.0.1:5000/events/{LAST_CHECKED}")
@@ -183,10 +204,10 @@ def make_transaction(app, transaction):
                         transaction.finished = True
                         print(f"Transaction wallet({transaction.wallet_id}) : SUCCESFULL PAYOUT!")
                         print(f"Transaction done !")
-                        break
+                        return
                     else:
                         print(f"Transaction wallet({transaction.wallet_id}) : FAILED PAYOUT! Trying again...")
-            break
+            
 
 @app.route('/transaction', methods=['POST'])
 def initiate_transaction():
@@ -196,8 +217,15 @@ def initiate_transaction():
     transaction = TransactionModel(from_iban, to_iban, amount, wallet_id)
     db.session.add(transaction)
     t = threading.Thread(target=make_transaction, args=[app, transaction])
-    t.daemon = True
     t.start()
+    
+    #TODO
+    #thread finish
+    # print("Commiting!")
+    # t.join()
+    # db.session.commit()
+    #commit to database all the changes
+    
     return jsonify(dict(result='Transaction initiated successfully!'))
 
 if __name__ == '__main__':
